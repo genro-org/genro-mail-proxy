@@ -873,6 +873,42 @@ class MailProxy(DispatcherMixin, ReporterMixin, BounceReceiverMixin):
         await self._start_bounce_receiver()
         self.logger.debug("All background tasks created")
 
+    async def check_readiness(self, db_timeout: float = 2.0) -> dict[str, Any]:
+        """Report whether the service can accept and process traffic.
+
+        Checks that background loops were started and are still running,
+        that the service is not shutting down, and that the database answers
+        a trivial query within ``db_timeout`` seconds.
+
+        Returns:
+            dict with ``ready`` (bool) and ``checks`` mapping each check name
+            to ``"ok"`` or a short failure reason.
+        """
+        checks: dict[str, str] = {}
+
+        checks["shutdown"] = "in progress" if self._stop.is_set() else "ok"
+
+        loops = {"smtp_dispatch": self._task_smtp, "client_report": self._task_client}
+        if not self._test_mode:
+            loops["cleanup"] = self._task_cleanup
+        for name, task in loops.items():
+            if task is None:
+                checks[name] = "not started"
+            elif task.done():
+                checks[name] = "stopped"
+            else:
+                checks[name] = "ok"
+
+        try:
+            await asyncio.wait_for(self.db.fetch_one("SELECT 1 AS ok"), timeout=db_timeout)
+            checks["database"] = "ok"
+        except asyncio.TimeoutError:
+            checks["database"] = "timeout"
+        except Exception as exc:  # noqa: BLE001 - any DB failure means not ready
+            checks["database"] = f"error: {type(exc).__name__}"
+
+        return {"ready": all(v == "ok" for v in checks.values()), "checks": checks}
+
     async def stop(self) -> None:
         """Stop all background tasks gracefully.
 

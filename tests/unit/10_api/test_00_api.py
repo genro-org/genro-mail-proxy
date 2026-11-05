@@ -183,6 +183,52 @@ def test_health_endpoint_no_auth_required():
     assert response.json() == {"status": "ok"}
 
 
+@pytest.mark.parametrize("path", ["/health", "/healthz", "/livez"])
+def test_liveness_endpoints_no_auth_required(path):
+    """Liveness probes answer without auth and without touching the service."""
+    svc = DummyService()
+    client = TestClient(create_app(svc, api_token=API_TOKEN))
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert client.head(path).status_code == 200
+
+
+def test_readyz_ok_when_service_ready():
+    svc = DummyService()
+
+    async def check_readiness():
+        return {"ready": True, "checks": {"database": "ok"}}
+
+    svc.check_readiness = check_readiness
+    client = TestClient(create_app(svc, api_token=API_TOKEN))
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "checks": {"database": "ok"}}
+
+
+def test_readyz_503_when_service_not_ready():
+    svc = DummyService()
+
+    async def check_readiness():
+        return {"ready": False, "checks": {"database": "timeout"}}
+
+    svc.check_readiness = check_readiness
+    client = TestClient(create_app(svc, api_token=API_TOKEN))
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json() == {"status": "unavailable", "checks": {"database": "timeout"}}
+
+
+def test_readyz_503_when_service_missing():
+    svc = DummyService()
+    client = TestClient(create_app(svc, api_token=API_TOKEN))
+    api.service = None
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["checks"] == {"service": "not initialized"}
+
+
 # ============================================================================
 # Additional Error Handling Tests
 # ============================================================================
