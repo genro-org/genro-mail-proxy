@@ -598,17 +598,36 @@ def create_app(
             content={"detail": exc.errors()}
         )
 
-    @api.get("/health")
-    async def health():
-        """Health check endpoint for container orchestration and load balancers.
+    @api.api_route("/health", methods=["GET", "HEAD"], tags=["probes"])
+    @api.api_route("/healthz", methods=["GET", "HEAD"], tags=["probes"])
+    @api.api_route("/livez", methods=["GET", "HEAD"], tags=["probes"])
+    async def liveness():
+        """Liveness probe: the process is up and the event loop answers.
 
-        This endpoint does not require authentication and is intended for
-        Kubernetes liveness/readiness probes or similar monitoring tools.
-
-        Returns:
-            dict: Simple status object with ``{"status": "ok"}``.
+        No authentication and no dependency checks, so a slow database never
+        causes the orchestrator to restart the container. ``/health`` is the
+        original path, kept for existing healthchecks.
         """
         return {"status": "ok"}
+
+    @api.api_route("/readyz", methods=["GET", "HEAD"], tags=["probes"])
+    async def readiness():
+        """Readiness probe: the service can accept and process traffic.
+
+        Returns 200 when the database is reachable, background loops are
+        running and the service is not shutting down; 503 otherwise, with
+        the per-check results in the body. No authentication required.
+        """
+        if not service:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unavailable", "checks": {"service": "not initialized"}},
+            )
+        result = await service.check_readiness()
+        return JSONResponse(
+            status_code=200 if result["ready"] else 503,
+            content={"status": "ok" if result["ready"] else "unavailable", "checks": result["checks"]},
+        )
 
     @api.get("/status", response_model=StatusResponse, response_model_exclude_none=True, dependencies=[auth_dependency])
     async def status():

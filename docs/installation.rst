@@ -205,13 +205,13 @@ Deployment
                cpu: "500m"
            livenessProbe:
              httpGet:
-               path: /health
+               path: /healthz
                port: 8000
              initialDelaySeconds: 10
              periodSeconds: 30
            readinessProbe:
              httpGet:
-               path: /health
+               path: /readyz
                port: 8000
              initialDelaySeconds: 5
              periodSeconds: 10

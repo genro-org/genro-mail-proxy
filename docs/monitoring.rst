@@ -202,25 +202,66 @@ Example Prometheus alerting rules:
 Health Endpoints
 ----------------
 
-Two health endpoints are available:
+The following probe endpoints require **no authentication**:
 
-``GET /health``
-~~~~~~~~~~~~~~~
+``GET /healthz`` (alias ``/livez``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Lightweight health check. Returns 200 OK if the service is running.
-**No authentication required**.
+Liveness probe. Returns 200 as long as the process and its event loop
+respond. It checks no dependencies, so a slow database never triggers a
+container restart. Use it for Kubernetes ``livenessProbe``.
 
 .. code-block:: bash
 
-   curl http://localhost:8000/health
+   curl http://localhost:8000/healthz
 
 Response:
 
 .. code-block:: json
 
-   {"ok": true}
+   {"status": "ok"}
 
-Use this for load balancer health checks and Kubernetes liveness probes.
+``GET /readyz``
+~~~~~~~~~~~~~~~
+
+Readiness probe. Returns 200 when the service can take traffic, 503
+otherwise. It checks that:
+
+- the database answers a trivial query within 2 seconds
+- the background loops (SMTP dispatch, client reporting and, outside test
+  mode, connection cleanup) are running
+- the service is not shutting down
+
+Use it for Kubernetes ``readinessProbe`` and for load balancers.
+
+.. code-block:: bash
+
+   curl -i http://localhost:8000/readyz
+
+Response (200 or 503):
+
+.. code-block:: json
+
+   {
+     "status": "ok",
+     "checks": {
+       "shutdown": "ok",
+       "smtp_dispatch": "ok",
+       "client_report": "ok",
+       "cleanup": "ok",
+       "database": "ok"
+     }
+   }
+
+When not ready, ``status`` is ``"unavailable"`` and the failing checks
+report a reason such as ``"not started"``, ``"stopped"``, ``"timeout"`` or
+``"error: <ExceptionType>"``.
+
+``GET /health``
+~~~~~~~~~~~~~~~
+
+Original health check, kept for existing healthchecks. Same handler as
+``/healthz``.
 
 ``GET /status``
 ~~~~~~~~~~~~~~~
@@ -259,13 +300,13 @@ Configure probes in your deployment:
            - name: mail-proxy
              livenessProbe:
                httpGet:
-                 path: /health
+                 path: /healthz
                  port: 8000
                initialDelaySeconds: 10
                periodSeconds: 10
              readinessProbe:
                httpGet:
-                 path: /health
+                 path: /readyz
                  port: 8000
                initialDelaySeconds: 5
                periodSeconds: 5
